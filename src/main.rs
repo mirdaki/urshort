@@ -1,30 +1,47 @@
-use std::{collections::HashMap, convert::Infallible, str::FromStr};
-
+use dotenv::dotenv;
 use regex::Regex;
-
+use std::{collections::HashMap, convert::Infallible, env, ffi::OsString, str::FromStr};
+use substring::Substring;
 use warp::{http::Uri, redirect, reject, Filter};
+
+const VANITY_URL_ENV_NAME: &str = "URSHORT_VANTY_URL_";
+const PATTERN_URL_ENV_NAME: &str = "URSHORT_PATTERN_URL_";
 
 #[tokio::main]
 async fn main() {
+    match dotenv() {
+        Ok(_) => println!("Loading values from '.env' file."),
+        Err(_) => println!("No '.env' file found."),
+    }
+
     let mut urls = UrlMappings::new();
-    urls.vanity = HashMap::from([
-        ("i".to_string(), Uri::from_str("https://codecaptured.com").unwrap()),
-        (
-            "i5".to_string(),
-            Uri::from_str("https://codecaptured.com/five").unwrap(),
-        ),
-    ]);
-    urls.pattern = vec![
-        (
-            Regex::new(r"^(?P<index>\d+)$").unwrap(),
-            "https://codecaptured.com/$index".to_string(),
-        ),
-        (
-            Regex::new(r"^i(?P<index>\d+)$").unwrap(),
-            "https://codecaptured.com/$index".to_string(),
-        ),
-    ];
-    // vanity_urls.load_from_file();
+    urls.vanity = extract_vanity_urls(env::vars_os(), VANITY_URL_ENV_NAME);
+
+    for (key, url) in urls.vanity {
+        println!("{} {}", key, url)
+    }
+
+    // let mut urls = UrlMappings::new();
+    // urls.vanity = HashMap::from([
+    //     (
+    //         "i".to_string(),
+    //         Uri::from_str("https://codecaptured.com").unwrap(),
+    //     ),
+    //     (
+    //         "i5".to_string(),
+    //         Uri::from_str("https://codecaptured.com/five").unwrap(),
+    //     ),
+    // ]);
+    // urls.pattern = vec![
+    //     (
+    //         Regex::new(r"^(?P<index>\d+)$").unwrap(),
+    //         "https://codecaptured.com/$index".to_string(),
+    //     ),
+    //     (
+    //         Regex::new(r"^i(?P<index>\d+)$").unwrap(),
+    //         "https://codecaptured.com/$index".to_string(),
+    //     ),
+    // ];
 
     // `Get /` Load the root message to inform this is live
     let root_message = warp::path::end().and(warp::get()).and_then(get_root);
@@ -39,14 +56,9 @@ async fn main() {
 
     let routes = warp::any().and(root_message.or(short_url));
 
-    //println!("\nRust Warp Server ready at {}", blue.apply_to(&target));
-    println!("Use $curl 0.0.0.0:8000/hello/www.steadylearner.com to test the end point.");
-
-    /* let addr = ([127, 0, 0, 1], 3000).into();
-    let server = Server::bind(&addr).serve(make_svc);
-    println!("Listening on http://{}", addr); */
-
-    warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
+    let address = ([127, 0, 0, 1], 3000).into();
+    warp::serve(routes).run(address).await;
+    println!("Listening on http://{}", address);
 }
 
 async fn get_root() -> Result<impl warp::Reply, Infallible> {
@@ -70,46 +82,30 @@ fn with_url_mappings(
     warp::any().map(move || urls.clone())
 }
 
-/* async fn get_url(path: String, vanity_urls: Vanity) -> Result<impl warp::Reply, warp::Rejection> {
-    match vanity_urls.urls.get(&path) {
-        Some(x) => Ok(redirect(x.clone())),
-        None => Err(reject::not_found()),
-    }
+fn extract_vanity_urls<I>(env_vars: I, env_var_prefix: &str) -> HashMap<String, Uri>
+where
+    I: Iterator<Item = (OsString, OsString)>,
+{
+    env_vars
+        .map(
+            |(os_x, os_y)| match (os_x.into_string(), os_y.into_string()) {
+                (Ok(x), Ok(y)) => match Uri::from_str(y.as_str()) {
+                    Ok(y) => Ok((x, y)),
+                    _ => Err("URI not valid"),
+                },
+                _ => Err("Not valid string"),
+            },
+        )
+        .filter(|item| match item {
+            Ok((x, _)) => x.starts_with(env_var_prefix),
+            _ => false,
+        })
+        .map(|item| match item {
+            Ok((x, y)) => (x.substring(env_var_prefix.len(), x.len()).to_owned(), y),
+            _ => unreachable!(),
+        })
+        .collect()
 }
-
-fn with_vanity(
-    urls: Vanity,
-) -> impl Filter<Extract = (Vanity,), Error = std::convert::Infallible> + Clone {
-    warp::any().map(move || urls.clone())
-} */
-
-/* #[derive(Clone)]
-struct Vanity {
-    urls: HashMap<String, Uri>,
-}
-
-impl Vanity {
-    pub fn new() -> Vanity {
-        Vanity {
-            urls: HashMap::new(),
-        }
-    }
-
-    pub fn load_from_memory(urls: HashMap<String, Uri>) -> Vanity {
-        Vanity { urls }
-    }
-
-    pub fn load_from_file(&mut self /*, file: file()*/) {
-        self.urls.insert(
-            "1".to_string(),
-            Uri::from_static("https://codecaptured.com"),
-        );
-        self.urls.insert(
-            "bye".to_string(),
-            Uri::from_static("http://matthewbooe.com"),
-        );
-    }
-} */
 
 #[derive(Clone)]
 struct UrlMappings {
@@ -159,11 +155,74 @@ impl UrlMappings {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
+    use std::{ffi::OsString, str::FromStr};
     use warp::http::uri::InvalidUri;
 
     use super::*;
+
+    #[test]
+    fn load_vanity_env_var() -> Result<(), ()> {
+        let simple_key = "test";
+        let simple_value = "https://example.com/";
+        let unused_key = "unused";
+        let unused_value = "https://example.com/unused";
+        let empty_key = "";
+        let empty_value = "https://example.com/empty";
+        let overriden_duplicate_key = "override";
+        let overriden_duplicate_value = "https://example.com/overriden";
+        let override_duplicate_key = "override";
+        let override_duplicate_value = "https://example.com/override";
+
+        let variables_from_environment = vec![
+            (
+                OsString::from_str(format!("{}{}", VANITY_URL_ENV_NAME, simple_key).as_str())
+                    .unwrap(),
+                OsString::from_str(simple_value).unwrap(),
+            ),
+            (
+                OsString::from_str(unused_key).unwrap(),
+                OsString::from_str(unused_value).unwrap(),
+            ),
+            (
+                OsString::from_str(format!("{}{}", VANITY_URL_ENV_NAME, empty_key).as_str())
+                    .unwrap(),
+                OsString::from_str(empty_value).unwrap(),
+            ),
+            (
+                OsString::from_str(
+                    format!("{}{}", VANITY_URL_ENV_NAME, overriden_duplicate_key).as_str(),
+                )
+                .unwrap(),
+                OsString::from_str(overriden_duplicate_value).unwrap(),
+            ),
+            (
+                OsString::from_str(
+                    format!("{}{}", VANITY_URL_ENV_NAME, override_duplicate_key).as_str(),
+                )
+                .unwrap(),
+                OsString::from_str(override_duplicate_value).unwrap(),
+            ),
+        ];
+
+        let result =
+            extract_vanity_urls(variables_from_environment.into_iter(), VANITY_URL_ENV_NAME);
+
+        assert_eq!(
+            result.get(simple_key).unwrap(),
+            &Uri::from_str(simple_value).unwrap()
+        );
+        assert!(result.get(unused_key).is_none());
+        assert_eq!(
+            result.get(empty_key).unwrap(),
+            &Uri::from_str(empty_value).unwrap()
+        );
+        assert_eq!(
+            result.get(override_duplicate_key).unwrap(),
+            &Uri::from_str(override_duplicate_value).unwrap()
+        );
+
+        Ok(())
+    }
 
     #[test]
     fn vanity_urls() -> Result<(), InvalidUri> {
@@ -171,10 +230,7 @@ mod tests {
         urls.vanity = HashMap::from([
             ("test".to_string(), Uri::from_str("https://example.com")?),
             ("1/1".to_string(), Uri::from_str("https://example.com/1")?),
-            (
-                "3.14".to_string(),
-                Uri::from_str("https://example.com/pi")?,
-            ),
+            ("3.14".to_string(), Uri::from_str("https://example.com/pi")?),
         ]);
 
         // No matches
@@ -235,10 +291,7 @@ mod tests {
         let mut urls = UrlMappings::new();
         urls.vanity = HashMap::from([
             ("i".to_string(), Uri::from_str("https://example.com")?),
-            (
-                "i5".to_string(),
-                Uri::from_str("https://example.com/five")?,
-            ),
+            ("i5".to_string(), Uri::from_str("https://example.com/five")?),
             (
                 "unrelated".to_string(),
                 Uri::from_str("https://example.com/byebye")?,
