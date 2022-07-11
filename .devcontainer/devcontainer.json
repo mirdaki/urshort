@@ -28,10 +28,17 @@
 
 	// Add the IDs of extensions you want installed when the container is created.
 	"extensions": [
-		"vadimcn.vscode-lldb",
+		"eamodio.gitlens",
+		"EditorConfig.EditorConfig",
+		"Gruntfuggly.todo-tree",
+		"hbenl.vscode-test-explorer",
 		"matklad.rust-analyzer",
+		"ms-vscode.test-adapter-converter",
+		"oderwat.indent-rainbow",
+		"serayuzgur.crates",
+		"Swellaby.vscode-rust-test-adapter",
 		"tamasfe.even-better-toml",
-		"serayuzgur.crates"
+		"vadimcn.vscode-lldb"
 	],
 
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
