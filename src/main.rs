@@ -1,13 +1,61 @@
 use dotenv::dotenv;
 use regex::Regex;
 use std::{
-	collections::HashMap, convert::Infallible, env, ffi::OsString, net::SocketAddr, str::FromStr,
+	collections::HashMap, convert::Infallible, env, ffi::OsString, net::SocketAddr,
+	str::FromStr,
 };
 use substring::Substring;
 use warp::{http::Uri, hyper::StatusCode, redirect, reject, Filter, Rejection};
 
 const VANITY_URL_ENV_NAME: &str = "URSHORT_VANITY_URL_";
 const PATTERN_URL_ENV_NAME: &str = "URSHORT_PATTERN_URL_";
+const PATTERN_REGEX_ENV_NAME: &str = "URSHORT_PATTERN_REGEX_";
+
+#[derive(Clone)]
+struct UrlMappings {
+	vanity: HashMap<String, Uri>,
+	pattern: Vec<(Regex, String)>,
+}
+
+impl UrlMappings {
+	pub fn new() -> UrlMappings {
+		UrlMappings {
+			vanity: HashMap::new(),
+			pattern: Vec::new(),
+		}
+	}
+
+	pub fn match_vanity(&self, uri: &str) -> Result<Uri, &str> {
+		match self.vanity.get(uri) {
+			Some(x) => Ok(x.clone()),
+			None => Err("No vanity found"),
+		}
+	}
+
+	pub fn match_pattern(&self, uri: &str) -> Result<Uri, &str> {
+		for (regex, uri_pattern) in &self.pattern {
+			if !regex.is_match(uri) {
+				continue;
+			}
+
+			let replacement = regex.replace(uri, uri_pattern);
+
+			return match Uri::from_str(&replacement) {
+				Ok(new_uri) => Ok(new_uri),
+				Err(_) => Err("Pattern did not create URI"),
+			};
+		}
+
+		Err("No pattern found")
+	}
+
+	pub fn match_anything(&self, uri: &str) -> Result<Uri, &str> {
+		match self.match_vanity(uri) {
+			Ok(vanity) => Ok(vanity),
+			Err(_) => self.match_pattern(uri),
+		}
+	}
+}
 
 #[tokio::main]
 async fn main() {
@@ -18,32 +66,18 @@ async fn main() {
 
 	let mut urls = UrlMappings::new();
 	urls.vanity = extract_vanity_urls(env::vars_os(), VANITY_URL_ENV_NAME);
+	urls.pattern =
+		extract_pattern_urls(env::vars_os(), PATTERN_URL_ENV_NAME, PATTERN_REGEX_ENV_NAME);
 
+	println!("Vanity URLs");
 	for (key, url) in &urls.vanity {
-		println!("{} {}", key, url)
+		println!("{} {}", key, url);
 	}
 
-	// let mut urls = UrlMappings::new();
-	// urls.vanity = HashMap::from([
-	//     (
-	//         "i".to_string(),
-	//         Uri::from_str("https://codecaptured.com").unwrap(),
-	//     ),
-	//     (
-	//         "i5".to_string(),
-	//         Uri::from_str("https://codecaptured.com/five").unwrap(),
-	//     ),
-	// ]);
-	// urls.pattern = vec![
-	//     (
-	//         Regex::new(r"^(?P<index>\d+)$").unwrap(),
-	//         "https://codecaptured.com/$index".to_string(),
-	//     ),
-	//     (
-	//         Regex::new(r"^i(?P<index>\d+)$").unwrap(),
-	//         "https://codecaptured.com/$index".to_string(),
-	//     ),
-	// ];
+	println!("Pattern URLs");
+	for (key, url) in &urls.pattern {
+		println!("{} {}", key, url);
+	}
 
 	// `Get /` Load the root message to inform this is live
 	let root_message = warp::path::end().and(warp::get()).and_then(get_root);
@@ -92,12 +126,13 @@ async fn error_message(err: Rejection) -> Result<impl warp::Reply, Infallible> {
 
 fn extract_vanity_urls<I>(env_vars: I, env_var_prefix: &str) -> HashMap<String, Uri>
 where
-	I: Iterator<Item = (OsString, OsString)>,
+	I: IntoIterator<Item = (OsString, OsString)>,
 {
 	env_vars
+		.into_iter()
 		.map(
 			|(os_x, os_y)| match (os_x.into_string(), os_y.into_string()) {
-				(Ok(x), Ok(y)) => match Uri::from_str(y.as_str()) {
+				(Ok(x), Ok(y)) => match Uri::from_str(&y) {
 					Ok(y) => Ok((x, y)),
 					_ => Err("URI not valid"),
 				},
@@ -115,52 +150,61 @@ where
 		.collect()
 }
 
-#[derive(Clone)]
-struct UrlMappings {
-	vanity: HashMap<String, Uri>,
-	pattern: Vec<(Regex, String)>,
-}
+fn extract_pattern_urls<I>(
+	env_vars: I,
+	env_var_url_prefix: &str,
+	env_var_regex_prefix: &str,
+) -> Vec<(Regex, String)>
+where
+	I: IntoIterator<Item = (OsString, OsString)>,
+{
+	// Partition is used, because env_vars needs to be split into multiple collections since it's consumed upon iteration
+	let (url_list, everything_else): (Vec<_>, Vec<_>) = env_vars.into_iter().partition(
+		|(x, _)| matches!(x.to_owned().into_string(), Ok(x) if x.starts_with(env_var_url_prefix)),
+	);
 
-impl UrlMappings {
-	pub fn new() -> UrlMappings {
-		UrlMappings {
-			vanity: HashMap::new(),
-			pattern: Vec::new(),
-		}
-	}
+	let (regex_list, _): (Vec<_>, _) = everything_else.into_iter().partition(
+		|(x, _)| matches!(x.to_owned().into_string(), Ok(x) if x.starts_with(env_var_regex_prefix)),
+	);
 
-	pub fn match_vanity(&self, uri: &str) -> Result<Uri, &str> {
-		match self.vanity.get(uri) {
-			Some(x) => Ok(x.clone()),
-			None => Err("No vanity found"),
-		}
-	}
+	let url_list = url_list
+		.into_iter()
+		.filter_map(|(x, y)| match (x.into_string(), y.into_string()) {
+			(Ok(x), Ok(y)) => match x[env_var_url_prefix.len()..].parse::<usize>() {
+				Ok(x) => Some((x, y)),
+				_ => None,
+			},
+			_ => None,
+		})
+		.fold(Vec::<String>::new(), |mut list: Vec<String>, (x, y)| {
+			list.insert(x, y);
+			list
+		});
 
-	pub fn match_pattern(&self, uri: &str) -> Result<Uri, &str> {
-		for (regex, uri_pattern) in &self.pattern {
-			if !regex.is_match(uri) {
-				continue;
+	let regex_list = regex_list
+		.into_iter()
+		.filter_map(|(x, y)| match (x.into_string(), y.into_string()) {
+			(Ok(x), Ok(y)) => {
+				match (
+					x[env_var_regex_prefix.len()..].parse::<usize>(),
+					Regex::from_str(&y),
+				) {
+					(Ok(x), Ok(y)) => Some((x, y)),
+					_ => None,
+				}
 			}
+			_ => None,
+		})
+		.fold(Vec::<Regex>::new(), |mut list: Vec<Regex>, (x, y)| {
+			list.insert(x, y);
+			list
+		});
 
-			let replacement = regex.replace(uri, uri_pattern);
-
-			return match Uri::from_str(&replacement) {
-				Ok(new_uri) => Ok(new_uri),
-				Err(_) => Err("Pattern did not create URI"),
-			};
-		}
-
-		Err("No pattern found")
-	}
-
-	pub fn match_anything(&self, uri: &str) -> Result<Uri, &str> {
-		match self.match_vanity(uri) {
-			Ok(vanity) => Ok(vanity),
-			Err(_) => self.match_pattern(uri),
-		}
-	}
+	regex_list
+		.into_iter()
+		.zip(url_list)
+		.collect::<Vec<(Regex, String)>>()
 }
-
 #[cfg(test)]
 mod tests {
 	use std::{ffi::OsString, str::FromStr};
@@ -228,6 +272,36 @@ mod tests {
 			result.get(override_duplicate_key).unwrap(),
 			&Uri::from_str(override_duplicate_value).unwrap()
 		);
+
+		Ok(())
+	}
+
+	#[test]
+	fn load_pattern_env_var() -> Result<(), ()> {
+		let simple_regex = "a*";
+		let simple_value = "https://example.com/";
+
+		let variables_from_environment = vec![
+			(
+				OsString::from_str(format!("{}{}", PATTERN_REGEX_ENV_NAME, 0).as_str()).unwrap(),
+				OsString::from_str(simple_regex).unwrap(),
+			),
+			(
+				OsString::from_str(format!("{}{}", PATTERN_URL_ENV_NAME, 0).as_str()).unwrap(),
+				OsString::from_str(simple_value).unwrap(),
+			),
+		];
+
+		let result = extract_pattern_urls(
+			variables_from_environment,
+			PATTERN_URL_ENV_NAME,
+			PATTERN_REGEX_ENV_NAME,
+		);
+
+		// TODO: Test a couple more regexs and verify invalid ones are not loaded (check if the order of regexes being loaded matters)
+
+		assert_eq!(result[0].0.to_string(), simple_regex);
+		assert_eq!(result[0].1, simple_value);
 
 		Ok(())
 	}
