@@ -1,8 +1,7 @@
 use dotenv::dotenv;
 use regex::Regex;
 use std::{
-	collections::HashMap, convert::Infallible, env, ffi::OsString, net::SocketAddr,
-	str::FromStr,
+	collections::HashMap, convert::Infallible, env, ffi::OsString, net::SocketAddr, str::FromStr,
 };
 use substring::Substring;
 use warp::{http::Uri, hyper::StatusCode, redirect, reject, Filter, Rejection};
@@ -60,7 +59,7 @@ impl UrlMappings {
 #[tokio::main]
 async fn main() {
 	match dotenv() {
-		Ok(_) => println!("Loading values from '.env' file."),
+		Ok(_) => println!("Found '.env' file."),
 		Err(_) => println!("No '.env' file found."),
 	}
 
@@ -69,12 +68,12 @@ async fn main() {
 	urls.pattern =
 		extract_pattern_urls(env::vars_os(), PATTERN_URL_ENV_NAME, PATTERN_REGEX_ENV_NAME);
 
-	println!("Vanity URLs");
+	println!("Loaded Vanity URLs");
 	for (key, url) in &urls.vanity {
 		println!("{} {}", key, url);
 	}
 
-	println!("Pattern URLs");
+	println!("Loaded Pattern URLs");
 	for (key, url) in &urls.pattern {
 		println!("{} {}", key, url);
 	}
@@ -95,7 +94,7 @@ async fn main() {
 }
 
 async fn get_root() -> Result<impl warp::Reply, Infallible> {
-	Ok("URShort is running!") // TODO: Project name from cargo? or const
+	Ok("URShort is running!") // TODO: Project name from cargo? or const. Link to website?
 }
 
 async fn get_match(path: String, urls: UrlMappings) -> Result<impl warp::Reply, warp::Rejection> {
@@ -114,7 +113,7 @@ async fn error_message(err: Rejection) -> Result<impl warp::Reply, Infallible> {
 		message = "URL mapping not found :-(";
 	} else if err.find::<warp::reject::MethodNotAllowed>().is_some() {
 		code = StatusCode::METHOD_NOT_ALLOWED;
-		message = "Method not supported";
+		message = "HTTP Method not supported";
 	} else {
 		eprintln!("Server error: {:?}", err); // TODO: Should log or print errors?
 		code = StatusCode::INTERNAL_SERVER_ERROR;
@@ -134,9 +133,9 @@ where
 			|(os_x, os_y)| match (os_x.into_string(), os_y.into_string()) {
 				(Ok(x), Ok(y)) => match Uri::from_str(&y) {
 					Ok(y) => Ok((x, y)),
-					_ => Err("URI not valid"),
+					_ => Err("Vanity URI not valid"),
 				},
-				_ => Err("Not valid string"),
+				_ => Err("Not valid vanity string"),
 			},
 		)
 		.filter(|item| match item {
@@ -167,6 +166,7 @@ where
 		|(x, _)| matches!(x.to_owned().into_string(), Ok(x) if x.starts_with(env_var_regex_prefix)),
 	);
 
+	let url_length = url_list.len();
 	let url_list = url_list
 		.into_iter()
 		.filter_map(|(x, y)| match (x.into_string(), y.into_string()) {
@@ -176,11 +176,12 @@ where
 			},
 			_ => None,
 		})
-		.fold(Vec::<String>::new(), |mut list: Vec<String>, (x, y)| {
-			list.insert(x, y);
+		.fold(vec![String::new();url_length], |mut list: Vec<String>, (x, y)| {
+			list[x] = y;
 			list
 		});
 
+	let regex_length = regex_list.len();
 	let regex_list = regex_list
 		.into_iter()
 		.filter_map(|(x, y)| match (x.into_string(), y.into_string()) {
@@ -195,8 +196,8 @@ where
 			}
 			_ => None,
 		})
-		.fold(Vec::<Regex>::new(), |mut list: Vec<Regex>, (x, y)| {
-			list.insert(x, y);
+		.fold(vec![Regex::new("").unwrap();regex_length], |mut list: Vec<Regex>, (x, y)| {
+			list[x] = y;
 			list
 		});
 
@@ -205,6 +206,7 @@ where
 		.zip(url_list)
 		.collect::<Vec<(Regex, String)>>()
 }
+
 #[cfg(test)]
 mod tests {
 	use std::{ffi::OsString, str::FromStr};
@@ -278,17 +280,47 @@ mod tests {
 
 	#[test]
 	fn load_pattern_env_var() -> Result<(), ()> {
-		let simple_regex = "a*";
-		let simple_value = "https://example.com/";
+		let regex_0 = "a*";
+		let value_0 = "https://example.com/";
+		let regex_1 = r"^i(a+)$";
+		let value_1 = "https://example.com/a";
+		let regex_2 = r"^i(d+)$";
+		let value_2 = "https://example.com/$1";
+		let regex_3 = r"^i(?P<index>\d+)$";
+		let value_3 = "https://example.com/$index";
 
 		let variables_from_environment = vec![
 			(
+				OsString::from_str(format!("{}{}", PATTERN_REGEX_ENV_NAME, 1).as_str()).unwrap(),
+				OsString::from_str(regex_1).unwrap(),
+			),
+			(
 				OsString::from_str(format!("{}{}", PATTERN_REGEX_ENV_NAME, 0).as_str()).unwrap(),
-				OsString::from_str(simple_regex).unwrap(),
+				OsString::from_str(regex_0).unwrap(),
 			),
 			(
 				OsString::from_str(format!("{}{}", PATTERN_URL_ENV_NAME, 0).as_str()).unwrap(),
-				OsString::from_str(simple_value).unwrap(),
+				OsString::from_str(value_0).unwrap(),
+			),
+			(
+				OsString::from_str(format!("{}{}", PATTERN_URL_ENV_NAME, 1).as_str()).unwrap(),
+				OsString::from_str(value_1).unwrap(),
+			),
+			(
+				OsString::from_str(format!("{}{}", PATTERN_REGEX_ENV_NAME, 2).as_str()).unwrap(),
+				OsString::from_str(regex_2).unwrap(),
+			),
+			(
+				OsString::from_str(format!("{}{}", PATTERN_URL_ENV_NAME, 2).as_str()).unwrap(),
+				OsString::from_str(value_2).unwrap(),
+			),
+			(
+				OsString::from_str(format!("{}{}", PATTERN_REGEX_ENV_NAME, 3).as_str()).unwrap(),
+				OsString::from_str(regex_3).unwrap(),
+			),
+			(
+				OsString::from_str(format!("{}{}", PATTERN_URL_ENV_NAME, 3).as_str()).unwrap(),
+				OsString::from_str(value_3).unwrap(),
 			),
 		];
 
@@ -298,10 +330,18 @@ mod tests {
 			PATTERN_REGEX_ENV_NAME,
 		);
 
-		// TODO: Test a couple more regexs and verify invalid ones are not loaded (check if the order of regexes being loaded matters)
+		assert_eq!(result[0].0.to_string(), regex_0);
+		assert_eq!(result[0].1, value_0);
 
-		assert_eq!(result[0].0.to_string(), simple_regex);
-		assert_eq!(result[0].1, simple_value);
+		// Testing that patterns can be added in any order
+		assert_eq!(result[1].0.to_string(), regex_1);
+		assert_eq!(result[1].1, value_1);
+
+		assert_eq!(result[2].0.to_string(), regex_2);
+		assert_eq!(result[2].1, value_2);
+
+		assert_eq!(result[3].0.to_string(), regex_3);
+		assert_eq!(result[3].1, value_3);
 
 		Ok(())
 	}
