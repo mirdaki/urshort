@@ -10,7 +10,7 @@ Steps:
 5. [X] Load multiple pattern from file
 - [X] Make 404 fallback
 6. [X] Get short URL request working
-    - Vanity, pattern, or consistent hash
+    - Standard, pattern, or consistent hash
     - ~~Limit to allowed domains (both the hashes and the requester)~~
 7. [ ] Support http -> https
 8. [ ] Support rate limiting

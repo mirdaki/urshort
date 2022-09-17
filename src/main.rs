@@ -1,3 +1,6 @@
+#![warn(clippy::pedantic)]
+#![allow(clippy::unused_async)]
+
 use dotenv::dotenv;
 use regex::Regex;
 use std::{
@@ -6,28 +9,28 @@ use std::{
 use substring::Substring;
 use warp::{http::Uri, hyper::StatusCode, redirect, reject, Filter, Rejection};
 
-const VANITY_URL_ENV_NAME: &str = "URSHORT_VANITY_URL_";
-const PATTERN_URL_ENV_NAME: &str = "URSHORT_PATTERN_URL_";
+const STANDARD_URI_ENV_NAME: &str = "URSHORT_STANDARD_URI_";
+const PATTERN_URI_ENV_NAME: &str = "URSHORT_PATTERN_URI_";
 const PATTERN_REGEX_ENV_NAME: &str = "URSHORT_PATTERN_REGEX_";
 
 #[derive(Clone)]
-struct UrlMappings {
-	vanity: HashMap<String, Uri>,
+struct UriMappings {
+	standard: HashMap<String, Uri>,
 	pattern: Vec<(Regex, String)>,
 }
 
-impl UrlMappings {
-	pub fn new() -> UrlMappings {
-		UrlMappings {
-			vanity: HashMap::new(),
+impl UriMappings {
+	pub fn new() -> UriMappings {
+		UriMappings {
+			standard: HashMap::new(),
 			pattern: Vec::new(),
 		}
 	}
 
-	pub fn match_vanity(&self, uri: &str) -> Result<Uri, &str> {
-		match self.vanity.get(uri) {
+	pub fn match_standard(&self, uri: &str) -> Result<Uri, &str> {
+		match self.standard.get(uri) {
 			Some(x) => Ok(x.clone()),
-			None => Err("No vanity found"),
+			None => Err("No standard found"),
 		}
 	}
 
@@ -49,8 +52,8 @@ impl UrlMappings {
 	}
 
 	pub fn match_anything(&self, uri: &str) -> Result<Uri, &str> {
-		match self.match_vanity(uri) {
-			Ok(vanity) => Ok(vanity),
+		match self.match_standard(uri) {
+			Ok(standard) => Ok(standard),
 			Err(_) => self.match_pattern(uri),
 		}
 	}
@@ -63,30 +66,30 @@ async fn main() {
 		Err(_) => println!("No '.env' file found."),
 	}
 
-	let mut urls = UrlMappings::new();
-	urls.vanity = extract_vanity_urls(env::vars_os(), VANITY_URL_ENV_NAME);
-	urls.pattern =
-		extract_pattern_urls(env::vars_os(), PATTERN_URL_ENV_NAME, PATTERN_REGEX_ENV_NAME);
+	let mut uris = UriMappings::new();
+	uris.standard = extract_standard_uris(env::vars_os(), STANDARD_URI_ENV_NAME);
+	uris.pattern =
+		extract_pattern_uris(env::vars_os(), PATTERN_URI_ENV_NAME, PATTERN_REGEX_ENV_NAME);
 
-	println!("Loaded Vanity URLs");
-	for (key, url) in &urls.vanity {
-		println!("{} {}", key, url);
+	println!("Loaded Standard URIs");
+	for (key, uri) in &uris.standard {
+		println!("{} {}", key, uri);
 	}
 
-	println!("Loaded Pattern URLs");
-	for (key, url) in &urls.pattern {
-		println!("{} {}", key, url);
+	println!("Loaded Pattern URIs");
+	for (key, uri) in &uris.pattern {
+		println!("{} {}", key, uri);
 	}
 
 	// `Get /` Load the root message to inform this is live
 	let root_message = warp::path::end().and(warp::get()).and_then(get_root);
 
-	// `Get /:path` Attempt to redirect to a URL
-	let short_url = warp::get()
+	// `Get /:path` Attempt to redirect to a URI
+	let short_uri = warp::get()
 		.and(warp::path::param::<String>())
-		.and_then(move |name: String| get_match(name, urls.clone()));
+		.and_then(move |name: String| get_match(name, uris.clone()));
 
-	let routes = root_message.or(short_url).recover(error_message);
+	let routes = root_message.or(short_uri).recover(error_message);
 
 	let address: SocketAddr = ([127, 0, 0, 1], 3000).into(); // TODO: Address and port should be env vars
 	warp::serve(routes).run(address).await;
@@ -97,8 +100,8 @@ async fn get_root() -> Result<impl warp::Reply, Infallible> {
 	Ok("URShort is running!") // TODO: Project name from cargo? or const. Link to website?
 }
 
-async fn get_match(path: String, urls: UrlMappings) -> Result<impl warp::Reply, warp::Rejection> {
-	match urls.match_anything(&path) {
+async fn get_match(path: String, uris: UriMappings) -> Result<impl warp::Reply, warp::Rejection> {
+	match uris.match_anything(&path) {
 		Ok(x) => Ok(redirect(x)),
 		Err(_) => Err(reject::not_found()),
 	}
@@ -110,12 +113,12 @@ async fn error_message(err: Rejection) -> Result<impl warp::Reply, Infallible> {
 
 	if err.is_not_found() {
 		code = StatusCode::NOT_FOUND;
-		message = "URL mapping not found :-(";
+		message = "URI mapping not found :-(";
 	} else if err.find::<warp::reject::MethodNotAllowed>().is_some() {
 		code = StatusCode::METHOD_NOT_ALLOWED;
 		message = "HTTP Method not supported";
 	} else {
-		eprintln!("Server error: {:?}", err); // TODO: Should log or print errors?
+		eprintln!("Server error: {:?}", err);
 		code = StatusCode::INTERNAL_SERVER_ERROR;
 		message = "Whoops, something unexpected went wrong";
 	}
@@ -123,7 +126,7 @@ async fn error_message(err: Rejection) -> Result<impl warp::Reply, Infallible> {
 	Ok(warp::reply::with_status(message, code))
 }
 
-fn extract_vanity_urls<I>(env_vars: I, env_var_prefix: &str) -> HashMap<String, Uri>
+fn extract_standard_uris<I>(env_vars: I, env_var_prefix: &str) -> HashMap<String, Uri>
 where
 	I: IntoIterator<Item = (OsString, OsString)>,
 {
@@ -133,9 +136,9 @@ where
 			|(os_x, os_y)| match (os_x.into_string(), os_y.into_string()) {
 				(Ok(x), Ok(y)) => match Uri::from_str(&y) {
 					Ok(y) => Ok((x, y)),
-					_ => Err("Vanity URI not valid"),
+					_ => Err("Standard URI not valid"),
 				},
-				_ => Err("Not valid vanity string"),
+				_ => Err("Not valid standard string"),
 			},
 		)
 		.filter(|item| match item {
@@ -149,34 +152,34 @@ where
 		.collect()
 }
 
-fn extract_pattern_urls<I>(
+fn extract_pattern_uris<I>(
 	env_vars: I,
-	env_var_url_prefix: &str,
+	env_var_uri_prefix: &str,
 	env_var_regex_prefix: &str,
 ) -> Vec<(Regex, String)>
 where
 	I: IntoIterator<Item = (OsString, OsString)>,
 {
 	// Partition is used, because env_vars needs to be split into multiple collections since it's consumed upon iteration
-	let (url_list, everything_else): (Vec<_>, Vec<_>) = env_vars.into_iter().partition(
-		|(x, _)| matches!(x.to_owned().into_string(), Ok(x) if x.starts_with(env_var_url_prefix)),
+	let (uri_list, everything_else): (Vec<_>, Vec<_>) = env_vars.into_iter().partition(
+		|(x, _)| matches!(x.clone().into_string(), Ok(x) if x.starts_with(env_var_uri_prefix)),
 	);
 
 	let (regex_list, _): (Vec<_>, _) = everything_else.into_iter().partition(
-		|(x, _)| matches!(x.to_owned().into_string(), Ok(x) if x.starts_with(env_var_regex_prefix)),
+		|(x, _)| matches!(x.clone().into_string(), Ok(x) if x.starts_with(env_var_regex_prefix)),
 	);
 
-	let url_length = url_list.len();
-	let url_list = url_list
+	let uri_length = uri_list.len();
+	let uri_list = uri_list
 		.into_iter()
 		.filter_map(|(x, y)| match (x.into_string(), y.into_string()) {
-			(Ok(x), Ok(y)) => match x[env_var_url_prefix.len()..].parse::<usize>() {
+			(Ok(x), Ok(y)) => match x[env_var_uri_prefix.len()..].parse::<usize>() {
 				Ok(x) => Some((x, y)),
 				_ => None,
 			},
 			_ => None,
 		})
-		.fold(vec![String::new();url_length], |mut list: Vec<String>, (x, y)| {
+		.fold(vec![String::new();uri_length], |mut list: Vec<String>, (x, y)| {
 			list[x] = y;
 			list
 		});
@@ -203,19 +206,21 @@ where
 
 	regex_list
 		.into_iter()
-		.zip(url_list)
+		.zip(uri_list)
 		.collect::<Vec<(Regex, String)>>()
 }
 
 #[cfg(test)]
 mod tests {
+	#![allow(clippy::unnecessary_wraps)]
+
 	use std::{ffi::OsString, str::FromStr};
 	use warp::http::uri::InvalidUri;
 
 	use super::*;
 
 	#[test]
-	fn load_vanity_env_var() -> Result<(), ()> {
+	fn load_standard_env_var() -> Result<(), ()> {
 		let simple_key = "test";
 		let simple_value = "https://example.com/";
 		let unused_key = "unused";
@@ -229,7 +234,7 @@ mod tests {
 
 		let variables_from_environment = vec![
 			(
-				OsString::from_str(format!("{}{}", VANITY_URL_ENV_NAME, simple_key).as_str())
+				OsString::from_str(format!("{}{}", STANDARD_URI_ENV_NAME, simple_key).as_str())
 					.unwrap(),
 				OsString::from_str(simple_value).unwrap(),
 			),
@@ -238,20 +243,20 @@ mod tests {
 				OsString::from_str(unused_value).unwrap(),
 			),
 			(
-				OsString::from_str(format!("{}{}", VANITY_URL_ENV_NAME, empty_key).as_str())
+				OsString::from_str(format!("{}{}", STANDARD_URI_ENV_NAME, empty_key).as_str())
 					.unwrap(),
 				OsString::from_str(empty_value).unwrap(),
 			),
 			(
 				OsString::from_str(
-					format!("{}{}", VANITY_URL_ENV_NAME, overridden_duplicate_key).as_str(),
+					format!("{}{}", STANDARD_URI_ENV_NAME, overridden_duplicate_key).as_str(),
 				)
 				.unwrap(),
 				OsString::from_str(overridden_duplicate_value).unwrap(),
 			),
 			(
 				OsString::from_str(
-					format!("{}{}", VANITY_URL_ENV_NAME, override_duplicate_key).as_str(),
+					format!("{}{}", STANDARD_URI_ENV_NAME, override_duplicate_key).as_str(),
 				)
 				.unwrap(),
 				OsString::from_str(override_duplicate_value).unwrap(),
@@ -259,7 +264,7 @@ mod tests {
 		];
 
 		let result =
-			extract_vanity_urls(variables_from_environment.into_iter(), VANITY_URL_ENV_NAME);
+			extract_standard_uris(variables_from_environment.into_iter(), STANDARD_URI_ENV_NAME);
 
 		assert_eq!(
 			result.get(simple_key).unwrap(),
@@ -299,11 +304,11 @@ mod tests {
 				OsString::from_str(regex_0).unwrap(),
 			),
 			(
-				OsString::from_str(format!("{}{}", PATTERN_URL_ENV_NAME, 0).as_str()).unwrap(),
+				OsString::from_str(format!("{}{}", PATTERN_URI_ENV_NAME, 0).as_str()).unwrap(),
 				OsString::from_str(value_0).unwrap(),
 			),
 			(
-				OsString::from_str(format!("{}{}", PATTERN_URL_ENV_NAME, 1).as_str()).unwrap(),
+				OsString::from_str(format!("{}{}", PATTERN_URI_ENV_NAME, 1).as_str()).unwrap(),
 				OsString::from_str(value_1).unwrap(),
 			),
 			(
@@ -311,7 +316,7 @@ mod tests {
 				OsString::from_str(regex_2).unwrap(),
 			),
 			(
-				OsString::from_str(format!("{}{}", PATTERN_URL_ENV_NAME, 2).as_str()).unwrap(),
+				OsString::from_str(format!("{}{}", PATTERN_URI_ENV_NAME, 2).as_str()).unwrap(),
 				OsString::from_str(value_2).unwrap(),
 			),
 			(
@@ -319,14 +324,14 @@ mod tests {
 				OsString::from_str(regex_3).unwrap(),
 			),
 			(
-				OsString::from_str(format!("{}{}", PATTERN_URL_ENV_NAME, 3).as_str()).unwrap(),
+				OsString::from_str(format!("{}{}", PATTERN_URI_ENV_NAME, 3).as_str()).unwrap(),
 				OsString::from_str(value_3).unwrap(),
 			),
 		];
 
-		let result = extract_pattern_urls(
+		let result = extract_pattern_uris(
 			variables_from_environment,
-			PATTERN_URL_ENV_NAME,
+			PATTERN_URI_ENV_NAME,
 			PATTERN_REGEX_ENV_NAME,
 		);
 
@@ -347,30 +352,30 @@ mod tests {
 	}
 
 	#[test]
-	fn vanity_urls() -> Result<(), InvalidUri> {
-		let mut urls = UrlMappings::new();
-		urls.vanity = HashMap::from([
+	fn redirect_standard_uris() -> Result<(), InvalidUri> {
+		let mut uris = UriMappings::new();
+		uris.standard = HashMap::from([
 			("test".to_string(), Uri::from_str("https://example.com")?),
 			("1/1".to_string(), Uri::from_str("https://example.com/1")?),
 			("3.14".to_string(), Uri::from_str("https://example.com/pi")?),
 		]);
 
 		// No matches
-		assert!(urls.match_vanity("/invalid").is_err());
+		assert!(uris.match_standard("/invalid").is_err());
 
 		// Can't match an invalid URI, because it must be a URI to be loaded into the hashmap
 
-		// Vanity matches
+		// Standard matches
 		assert_eq!(
-			urls.match_vanity("test").unwrap(),
+			uris.match_standard("test").unwrap(),
 			Uri::from_str("https://example.com")?
 		);
 		assert_eq!(
-			urls.match_vanity("1/1").unwrap(),
+			uris.match_standard("1/1").unwrap(),
 			Uri::from_str("https://example.com/1")?
 		);
 		assert_eq!(
-			urls.match_vanity("3.14").unwrap(),
+			uris.match_standard("3.14").unwrap(),
 			Uri::from_str("https://example.com/pi")?
 		);
 
@@ -378,9 +383,9 @@ mod tests {
 	}
 
 	#[test]
-	fn pattern_urls() -> Result<(), InvalidUri> {
-		let mut urls = UrlMappings::new();
-		urls.pattern = vec![
+	fn redirect_pattern_uris() -> Result<(), InvalidUri> {
+		let mut uris = UriMappings::new();
+		uris.pattern = vec![
 			(
 				Regex::new(r"(?P<last>[^,\s]+),\s+(?P<first>\S+)").unwrap(),
 				"$first $last".to_string(),
@@ -392,16 +397,16 @@ mod tests {
 		];
 
 		// Pattern is close, but does not match
-		assert!(urls.match_pattern("i12.12").is_err());
-		assert!(urls.match_pattern("i-1212").is_err());
-		assert!(urls.match_pattern("i1212g").is_err());
-		assert!(urls.match_pattern("-i1212g").is_err());
+		assert!(uris.match_pattern("i12.12").is_err());
+		assert!(uris.match_pattern("i-1212").is_err());
+		assert!(uris.match_pattern("i1212g").is_err());
+		assert!(uris.match_pattern("-i1212g").is_err());
 
 		// Pattern matches, but not URI
-		assert!(urls.match_pattern("Solo, Jaina").is_err());
+		assert!(uris.match_pattern("Solo, Jaina").is_err());
 
 		// Pattern matches and is URI
-		let result = urls.match_pattern("i1212");
+		let result = uris.match_pattern("i1212");
 		assert!(result.is_ok());
 		assert_eq!(result.unwrap(), Uri::from_str("https://example.com/1212")?);
 
@@ -409,9 +414,9 @@ mod tests {
 	}
 
 	#[test]
-	fn vanity_and_pattern_urls() -> Result<(), InvalidUri> {
-		let mut urls = UrlMappings::new();
-		urls.vanity = HashMap::from([
+	fn redirect_standard_and_pattern_uris() -> Result<(), InvalidUri> {
+		let mut uris = UriMappings::new();
+		uris.standard = HashMap::from([
 			("i".to_string(), Uri::from_str("https://example.com")?),
 			("i5".to_string(), Uri::from_str("https://example.com/five")?),
 			(
@@ -419,7 +424,7 @@ mod tests {
 				Uri::from_str("https://example.com/byebye")?,
 			),
 		]);
-		urls.pattern = vec![
+		uris.pattern = vec![
 			(
 				Regex::new(r"^(?P<index>\d+)$").unwrap(),
 				"https://example.com/$index".to_string(),
@@ -430,16 +435,16 @@ mod tests {
 			),
 		];
 		// No match at all
-		assert!(urls.match_anything("ithree").is_err());
-		assert!(urls.match_anything("bad").is_err());
+		assert!(uris.match_anything("ithree").is_err());
+		assert!(uris.match_anything("bad").is_err());
 
-		// Vanity matches are preferred over pattern matches
-		let result = urls.match_anything("i5");
+		// Standard matches are preferred over pattern matches
+		let result = uris.match_anything("i5");
 		assert!(result.is_ok());
 		assert_eq!(result.unwrap(), Uri::from_str("https://example.com/five")?);
 
-		// Pattern match used when no vanity
-		let result = urls.match_anything("i42");
+		// Pattern match used when no standard
+		let result = uris.match_anything("i42");
 		assert!(result.is_ok());
 		assert_eq!(result.unwrap(), Uri::from_str("https://example.com/42")?);
 
