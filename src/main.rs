@@ -12,7 +12,10 @@ use warp::{http::Uri, hyper::StatusCode, redirect, reject, Filter, Rejection};
 const STANDARD_URI_ENV_NAME: &str = "URSHORT_STANDARD_URI_";
 const PATTERN_URI_ENV_NAME: &str = "URSHORT_PATTERN_URI_";
 const PATTERN_REGEX_ENV_NAME: &str = "URSHORT_PATTERN_REGEX_";
+const PORT_ENV_NAME: &str = "URSHORT_PORT";
+const DEFAULT_PORT: u16 = 3000;
 
+/// Contains the mapping of URIs to redirect to
 #[derive(Clone)]
 struct UriMappings {
 	standard: HashMap<String, Uri>,
@@ -20,6 +23,7 @@ struct UriMappings {
 }
 
 impl UriMappings {
+	/// Create a new empty `UriMappings`
 	pub fn new() -> UriMappings {
 		UriMappings {
 			standard: HashMap::new(),
@@ -27,6 +31,7 @@ impl UriMappings {
 		}
 	}
 
+	/// Match standard URIs from the collection
 	pub fn match_standard(&self, uri: &str) -> Result<Uri, &str> {
 		match self.standard.get(uri) {
 			Some(x) => Ok(x.clone()),
@@ -34,6 +39,7 @@ impl UriMappings {
 		}
 	}
 
+	/// Match pattern URIs from the collection
 	pub fn match_pattern(&self, uri: &str) -> Result<Uri, &str> {
 		for (regex, uri_pattern) in &self.pattern {
 			if !regex.is_match(uri) {
@@ -51,6 +57,8 @@ impl UriMappings {
 		Err("No pattern found")
 	}
 
+	/// Match both standard and pattern URIs from the colleciton.
+	/// Standard URIs will match before patterns.
 	pub fn match_anything(&self, uri: &str) -> Result<Uri, &str> {
 		match self.match_standard(uri) {
 			Ok(standard) => Ok(standard),
@@ -71,6 +79,8 @@ async fn main() {
 	uris.pattern =
 		extract_pattern_uris(env::vars_os(), PATTERN_URI_ENV_NAME, PATTERN_REGEX_ENV_NAME);
 
+	let port: u16 = extract_port_number(env::vars_os(), PORT_ENV_NAME).unwrap_or(DEFAULT_PORT);
+
 	println!("Loaded Standard URIs");
 	for (key, uri) in &uris.standard {
 		println!("{} {}", key, uri);
@@ -87,26 +97,33 @@ async fn main() {
 	// `Get /:path` Attempt to redirect to a URI
 	let short_uri = warp::get()
 		.and(warp::path::param::<String>())
-		.and_then(move |name: String| get_match(name, uris.clone()));
+		.and_then(move |name: String| get_match_and_redirect(name, uris.clone()));
 
 	let routes = root_message.or(short_uri).recover(error_message);
 
-	let address: SocketAddr = ([127, 0, 0, 1], 3000).into(); // TODO: Address and port should be env vars
-	warp::serve(routes).run(address).await;
+	let address: SocketAddr = ([127, 0, 0, 1], port).into();
 	println!("Listening on http://{}", address);
+
+	warp::serve(routes).run(address).await;
 }
 
+/// Return the welcome screen, indicating it is running
 async fn get_root() -> Result<impl warp::Reply, Infallible> {
 	Ok("URShort is running!") // TODO: Project name from cargo? or const. Link to website?
 }
 
-async fn get_match(path: String, uris: UriMappings) -> Result<impl warp::Reply, warp::Rejection> {
+/// Attempts to get a match and redirect if one is found
+async fn get_match_and_redirect(
+	path: String,
+	uris: UriMappings,
+) -> Result<impl warp::Reply, warp::Rejection> {
 	match uris.match_anything(&path) {
 		Ok(x) => Ok(redirect(x)),
 		Err(_) => Err(reject::not_found()),
 	}
 }
 
+/// Returns the relevant error message if there is a problem
 async fn error_message(err: Rejection) -> Result<impl warp::Reply, Infallible> {
 	let code;
 	let message;
@@ -126,32 +143,45 @@ async fn error_message(err: Rejection) -> Result<impl warp::Reply, Infallible> {
 	Ok(warp::reply::with_status(message, code))
 }
 
+/// Extract the configured port number, if one is there, from the environmental variables
+fn extract_port_number<I>(env_vars: I, env_var_prefix: &str) -> Option<u16>
+where
+	I: IntoIterator<Item = (OsString, OsString)>,
+{
+	env_vars
+		.into_iter()
+		.find_map(|(x, y)| match (x.into_string(), y.into_string()) {
+			(Ok(x), Ok(y)) if x.eq(env_var_prefix) => {
+				if let Ok(y) = y.parse::<u16>() {
+					return Some(y);
+				}
+				None
+			}
+			_ => None,
+		})
+}
+
+/// Extract all available standard URIs from the environmental variables
 fn extract_standard_uris<I>(env_vars: I, env_var_prefix: &str) -> HashMap<String, Uri>
 where
 	I: IntoIterator<Item = (OsString, OsString)>,
 {
 	env_vars
 		.into_iter()
-		.map(
-			|(os_x, os_y)| match (os_x.into_string(), os_y.into_string()) {
-				(Ok(x), Ok(y)) => match Uri::from_str(&y) {
-					Ok(y) => Ok((x, y)),
-					_ => Err("Standard URI not valid"),
-				},
-				_ => Err("Not valid standard string"),
+		.filter_map(|(x, y)| match (x.into_string(), y.into_string()) {
+			(Ok(x), Ok(y)) if x.starts_with(env_var_prefix) => match Uri::from_str(&y) {
+				Ok(y) => {
+					let x = x.substring(env_var_prefix.len(), x.len()).to_owned();
+					Some((x, y))
+				}
+				_ => None,
 			},
-		)
-		.filter(|item| match item {
-			Ok((x, _)) => x.starts_with(env_var_prefix),
-			_ => false,
-		})
-		.map(|item| match item {
-			Ok((x, y)) => (x.substring(env_var_prefix.len(), x.len()).to_owned(), y),
-			_ => unreachable!(),
+			_ => None,
 		})
 		.collect()
 }
 
+/// Extract all available pattern URIs from the environmental variables
 fn extract_pattern_uris<I>(
 	env_vars: I,
 	env_var_uri_prefix: &str,
@@ -179,10 +209,13 @@ where
 			},
 			_ => None,
 		})
-		.fold(vec![String::new();uri_length], |mut list: Vec<String>, (x, y)| {
-			list[x] = y;
-			list
-		});
+		.fold(
+			vec![String::new(); uri_length],
+			|mut list: Vec<String>, (x, y)| {
+				list[x] = y;
+				list
+			},
+		);
 
 	let regex_length = regex_list.len();
 	let regex_list = regex_list
@@ -199,10 +232,13 @@ where
 			}
 			_ => None,
 		})
-		.fold(vec![Regex::new("").unwrap();regex_length], |mut list: Vec<Regex>, (x, y)| {
-			list[x] = y;
-			list
-		});
+		.fold(
+			vec![Regex::new("").unwrap(); regex_length],
+			|mut list: Vec<Regex>, (x, y)| {
+				list[x] = y;
+				list
+			},
+		);
 
 	regex_list
 		.into_iter()
@@ -218,6 +254,47 @@ mod tests {
 	use warp::http::uri::InvalidUri;
 
 	use super::*;
+
+	#[test]
+	fn load_port_env_var() -> Result<(), ()> {
+		let port_to_pass = 8080;
+
+		let unrelated_key = "test";
+		let unrelated_value = "test";
+		let not_number = "notANumber";
+		let signed_number = "-3000";
+		let valid_value = port_to_pass.to_string();
+		let not_the_first_valid_value = "8000";
+
+		let variables_from_environment = vec![
+			(
+				OsString::from_str(unrelated_key).unwrap(),
+				OsString::from_str(unrelated_value).unwrap(),
+			),
+			(
+				OsString::from_str(PORT_ENV_NAME).unwrap(),
+				OsString::from_str(not_number).unwrap(),
+			),
+			(
+				OsString::from_str(PORT_ENV_NAME).unwrap(),
+				OsString::from_str(signed_number).unwrap(),
+			),
+			(
+				OsString::from_str(PORT_ENV_NAME).unwrap(),
+				OsString::from_str(valid_value.as_str()).unwrap(),
+			),
+			(
+				OsString::from_str(PORT_ENV_NAME).unwrap(),
+				OsString::from_str(not_the_first_valid_value).unwrap(),
+			),
+		];
+
+		let result = extract_port_number(variables_from_environment.into_iter(), PORT_ENV_NAME);
+
+		assert_eq!(result, Some(port_to_pass));
+
+		Ok(())
+	}
 
 	#[test]
 	fn load_standard_env_var() -> Result<(), ()> {
@@ -263,8 +340,10 @@ mod tests {
 			),
 		];
 
-		let result =
-			extract_standard_uris(variables_from_environment.into_iter(), STANDARD_URI_ENV_NAME);
+		let result = extract_standard_uris(
+			variables_from_environment.into_iter(),
+			STANDARD_URI_ENV_NAME,
+		);
 
 		assert_eq!(
 			result.get(simple_key).unwrap(),
