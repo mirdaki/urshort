@@ -57,8 +57,8 @@ impl UriMappings {
 		Err("No pattern found")
 	}
 
-	/// Match both standard and pattern URIs from the colleciton.
-	/// Standard URIs will match before patterns.
+	/// Match both standard and pattern URIs from the collection.
+	/// Standard URIs will match before patterns
 	pub fn match_anything(&self, uri: &str) -> Result<Uri, &str> {
 		match self.match_standard(uri) {
 			Ok(standard) => Ok(standard),
