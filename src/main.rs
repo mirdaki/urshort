@@ -21,7 +21,6 @@ use std::{
 	sync::Arc,
 };
 use substring::Substring;
-// use warp::{http::Uri, hyper::StatusCode, redirect, reject, Filter, Rejection};
 
 const STANDARD_URI_ENV_NAME: &str = "URSHORT_STANDARD_URI_";
 const PATTERN_URI_ENV_NAME: &str = "URSHORT_PATTERN_URI_";
