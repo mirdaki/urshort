@@ -9,7 +9,7 @@ license = "MIT"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-warp = "0.3.2"
+axum = "0.5.16"
 regex = "1.5.4"
 dotenv = "0.15.0"
 substring = "1.4.5"

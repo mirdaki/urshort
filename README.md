@@ -12,13 +12,13 @@ Steps:
 6. [X] Get short URL request working
     - Standard, pattern, or consistent hash
     - ~~Limit to allowed domains (both the hashes and the requester)~~
-7. [ ] Support http -> https
-8. [ ] Support rate limiting
+7. ~~[ ] Support http -> https~~
+8. ~~[ ] Support rate limiting~~
 9. ~~[ ] Add telemetry option~~
 10. ~~[ ] Store data in database~~
-11. [ ] HTML Page for load and 404?
-12. [ ] Clean up, try to remove clones
+11. [X] HTML Page for load and 404
+12. [X] Clean up, try to remove clones
 13. [ ] README instructions
 14. [ ] Docker image and compose
 15. [ ] Publish on Dockerhub and Crates
-16. [ ] Build task
+16. [X] Build task
