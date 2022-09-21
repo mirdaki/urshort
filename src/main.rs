@@ -1,14 +1,26 @@
 #![warn(clippy::pedantic)]
 #![allow(clippy::unused_async)]
 
+use axum::{
+	extract::Path,
+	http::Uri,
+	response::{Html, Redirect},
+	routing::get,
+	Router,
+};
 use dotenv::dotenv;
 use regex::Regex;
 use std::{
-	collections::HashMap, convert::Infallible, env, ffi::OsString, net::SocketAddr, str::FromStr,
+	collections::HashMap,
+	env,
+	ffi::OsString,
+	fs::File,
+	io::{Error, Read},
+	net::SocketAddr,
+	str::FromStr,
 	sync::Arc,
 };
 use substring::Substring;
-use warp::{http::Uri, hyper::StatusCode, redirect, reject, Filter, Rejection};
 
 const STANDARD_URI_ENV_NAME: &str = "URSHORT_STANDARD_URI_";
 const PATTERN_URI_ENV_NAME: &str = "URSHORT_PATTERN_URI_";
@@ -24,8 +36,8 @@ struct UriMappings {
 
 impl UriMappings {
 	/// Create a new empty `UriMappings`
-	pub fn new(standard: HashMap<String, Uri>, pattern: Vec<(Regex, String)>) -> Arc<UriMappings> {
-		Arc::new(UriMappings { standard, pattern })
+	pub fn new(standard: HashMap<String, Uri>, pattern: Vec<(Regex, String)>) -> UriMappings {
+		UriMappings { standard, pattern }
 	}
 
 	/// Match standard URIs from the collection
@@ -75,7 +87,7 @@ async fn main() {
 	let standard_uris = extract_standard_uris(env::vars_os(), STANDARD_URI_ENV_NAME);
 	let pattern_uris =
 		extract_pattern_uris(env::vars_os(), PATTERN_URI_ENV_NAME, PATTERN_REGEX_ENV_NAME);
-	let uri_mappings = UriMappings::new(standard_uris, pattern_uris);
+	let uri_mappings = Arc::new(UriMappings::new(standard_uris, pattern_uris));
 
 	let port: u16 = extract_port_number(env::vars_os(), PORT_ENV_NAME).unwrap_or(DEFAULT_PORT);
 
@@ -91,57 +103,62 @@ async fn main() {
 	}
 	println!();
 
-	// `Get /` Load the root message to inform this is live
-	let root_message = warp::path::end().and_then(get_root);
+	// Load welcome page
+	let welcome_page = Arc::new(load_html_page("./src/index.html").unwrap_or_else(|error| {
+		eprint!("{}", error);
+		"Home page failed to load".to_string()
+	}));
 
-	// `Get /:path` Attempt to redirect to a URI
-	let short_uri = warp::path::param::<String>()
-		.and_then(move |name: String| get_match_and_redirect(name, uri_mappings.clone()));
+	// Load error page
+	let error_page = Arc::new(load_html_page("./src/error.html").unwrap_or_else(|error| {
+		eprint!("{}", error);
+		"Error page failed to load".to_string()
+	}));
 
-	let routes = warp::get()
-		.and(root_message.or(short_uri))
-		.recover(error_message);
+	// build our application with a route
+	let app = Router::new()
+		// `GET /` for homepage
+		.route("/", get(move || get_root(welcome_page.clone())))
+		// `POST /:parameter` for vanity URL or error page if it fails
+		.route(
+			"/:parameter",
+			get(move |Path(parameter): Path<String>| {
+				get_match_and_redirect(parameter, uri_mappings.clone(), error_page.clone())
+			}),
+		);
 
-	let address: SocketAddr = ([127, 0, 0, 1], port).into();
+	let address = SocketAddr::from(([127, 0, 0, 1], port));
 	println!("Listening on http://{}", address);
 
-	warp::serve(routes).run(address).await;
+	axum::Server::bind(&address)
+		.serve(app.into_make_service())
+		.await
+		.unwrap();
+}
+
+/// Load a local file into a string
+fn load_html_page(path: &str) -> Result<String, Error> {
+	let mut file = File::open(path)?;
+	let mut page = String::new();
+	file.read_to_string(&mut page)?;
+	Ok(page)
 }
 
 /// Return the welcome screen, indicating it is running
-async fn get_root() -> Result<impl warp::Reply, Infallible> {
-	Ok("URShort is running!") // TODO: Project name from cargo? or const. Link to website?
+async fn get_root(welcome_page: Arc<String>) -> Html<String> {
+	Html(welcome_page.to_string())
 }
 
 /// Attempts to get a match and redirect if one is found
 async fn get_match_and_redirect(
 	path: String,
 	uri_mappings: Arc<UriMappings>,
-) -> Result<impl warp::Reply, warp::Rejection> {
+	error_page: Arc<String>,
+) -> Result<axum::response::Redirect, Html<String>> {
 	match uri_mappings.match_anything(&path) {
-		Ok(x) => Ok(redirect(x)),
-		Err(_) => Err(reject::not_found()),
+		Ok(x) => Ok(Redirect::temporary(x.to_string().as_str())),
+		Err(_) => Err(Html(error_page.to_string())),
 	}
-}
-
-/// Returns the relevant error message if there is a problem
-async fn error_message(err: Rejection) -> Result<impl warp::Reply, Infallible> {
-	let code;
-	let message;
-
-	if err.is_not_found() {
-		code = StatusCode::NOT_FOUND;
-		message = "URI mapping not found :-(";
-	} else if err.find::<warp::reject::MethodNotAllowed>().is_some() {
-		code = StatusCode::METHOD_NOT_ALLOWED;
-		message = "HTTP Method not supported";
-	} else {
-		eprintln!("Server error: {:?}", err);
-		code = StatusCode::INTERNAL_SERVER_ERROR;
-		message = "Whoops, something unexpected went wrong";
-	}
-
-	Ok(warp::reply::with_status(message, code))
 }
 
 /// Extract the configured port number, if one is there, from the environmental variables
@@ -251,8 +268,8 @@ where
 mod tests {
 	#![allow(clippy::unnecessary_wraps)]
 
+	use axum::http::uri::InvalidUri;
 	use std::{ffi::OsString, str::FromStr};
-	use warp::http::uri::InvalidUri;
 
 	use super::*;
 
