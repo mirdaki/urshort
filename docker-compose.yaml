@@ -1,0 +1,10 @@
+version: "3.8"
+services:
+  urshort:
+    image: mirdaki/urshort:latest
+    container_name: urshort
+    env_file:
+    - .env
+    ports:
+      - 54027:54027
+    restart: unless-stopped
