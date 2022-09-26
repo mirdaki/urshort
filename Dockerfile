@@ -15,7 +15,6 @@ RUN cargo build --release --bin urshort
 FROM debian:bullseye-slim AS runtime
 WORKDIR /usr/local/bin
 COPY --from=builder /app/target/release/urshort /usr/local/bin
-ccccckl
 
 EXPOSE 54027
 ENTRYPOINT ["/usr/local/bin/urshort"]
