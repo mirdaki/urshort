@@ -1,9 +1,14 @@
 [package]
 name = "urshort"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Matthew Booe <mirdaki@users.noreply.github.com>"]
+description = "A blazingly fast and amazingly simple URL shortener designed for self-hosters."
 edition = "2021"
 license = "MIT"
+homepage = "https://github.com/mirdaki/urshort"
+repository = "https://github.com/mirdaki/urshort"
+keywords = ["url-shortener", "server", "web"]
+categories = ["web-programming::http-server"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
