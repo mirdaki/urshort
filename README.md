@@ -1,5 +1,13 @@
 # URShort
 
+[![Latest Docker Image Version](https://img.shields.io/docker/v/mirdaki/urshort?style=flat-square)](https://hub.docker.com/r/mirdaki/urshort)
+
+[![Latest Crates.io Version](https://img.shields.io/crates/v/urshort?style=flat-square)](https://crates.io/crates/urshort)
+
+[![Latest Crates.io Version](https://img.shields.io/github/workflow/status/mirdaki/urshort/Rust%20Check/main?style=flat-square)](https://github.com/mirdaki/urshort/actions/workflows/rust-check.yml)
+
+[![MIT license](https://img.shields.io/crates/l/urshort?style=flat-square)](LICENSE.md)
+
 A blazingly fast and amazingly simple URL shortener designed for self-hosters.
 
 Support regular vanity URI mappings as well as (Perl style) regex based mapping!
