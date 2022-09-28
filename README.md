@@ -1,12 +1,18 @@
 # URShort
 
-[![Latest Docker Image Version](https://img.shields.io/docker/v/mirdaki/urshort?style=flat-square)](https://hub.docker.com/r/mirdaki/urshort)
+[![Latest Docker Image Version][Docker Image]][Docker Download]
+[![Latest Crates.io Version][Crates Image]][Crates Download]
+[![Latest Crates.io Version][Build Image]][Build]
+[![MIT license][License Image]][License]
 
-[![Latest Crates.io Version](https://img.shields.io/crates/v/urshort?style=flat-square)](https://crates.io/crates/urshort)
-
-[![Latest Crates.io Version](https://img.shields.io/github/workflow/status/mirdaki/urshort/Rust%20Check/main?style=flat-square)](https://github.com/mirdaki/urshort/actions/workflows/rust-check.yml)
-
-[![MIT license](https://img.shields.io/crates/l/urshort?style=flat-square)](LICENSE.md)
+[Docker Image]: https://img.shields.io/docker/v/mirdaki/urshort?style=flat-square
+[Docker Download]: https://hub.docker.com/r/mirdaki/urshort
+[Crates Image]: https://img.shields.io/crates/v/urshort?style=flat-square
+[Crates Download]: https://crates.io/crates/urshort
+[Build Image]: https://img.shields.io/github/workflow/status/mirdaki/urshort/Rust%20Check/main?style=flat-square
+[Build]: https://github.com/mirdaki/urshort/actions/workflows/rust-check.yml
+[License Image]: https://img.shields.io/crates/l/urshort?style=flat-square
+[License]: LICENSE.md
 
 A blazingly fast and amazingly simple URL shortener designed for self-hosters.
 
